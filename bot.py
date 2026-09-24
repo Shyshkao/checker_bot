@@ -711,7 +711,13 @@ def find_matches(update: Update, text):
 # ============================================================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+    logger.info(
+        f"📩 ОТРИМАНО ПОВІДОМЛЕННЯ: "
+        f"text={update.message.text if update.message else None}, "
+        f"chat_id={update.effective_chat.id if update.effective_chat else None}, "
+        f"user_id={update.effective_user.id if update.effective_user else None}, "
+        f"pereplata={context.user_data.get('pereplata')}"
+    )
     if not update.message:
         return
 

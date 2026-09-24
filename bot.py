@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 def load_cards():
+    """
+    Завантажує всі карти з data/cards.json.
+    Кожна група має свій окремий пул.
+    """
+
     if not CARDS_FILE.exists():
         return {}
 
@@ -45,8 +50,6 @@ def load_cards():
         with open(CARDS_FILE, "r", encoding="utf-8") as file:
             data = json.load(file)
 
-            # Якщо старий формат був списком,
-            # конвертуємо його в новий формат
             if isinstance(data, list):
                 return {"old_pool": data}
 
@@ -60,6 +63,10 @@ def load_cards():
 
 
 def save_cards(cards):
+    """
+    Зберігає всі карти у файл.
+    """
+
     with open(CARDS_FILE, "w", encoding="utf-8") as file:
         json.dump(
             cards,
@@ -70,13 +77,12 @@ def save_cards(cards):
 
 
 # ============================================================
-# ОТРИМАННЯ ID ПОТОЧНОЇ ГРУПИ
+# РОБОТА З ГРУПОЮ
 # ============================================================
 
 def get_chat_id(update: Update):
     """
-    Кожна група має власний ID.
-    Саме він використовується як окремий пул карт.
+    Повертає ID поточного чату.
     """
 
     chat = update.effective_chat
@@ -89,7 +95,7 @@ def get_chat_id(update: Update):
 
 def get_chat_pool(update: Update):
     """
-    Повертає пул карт саме поточної групи.
+    Повертає пул карт тільки поточної групи.
     """
 
     all_cards = load_cards()
@@ -103,7 +109,7 @@ def get_chat_pool(update: Update):
 
 def save_chat_pool(update: Update, pool):
     """
-    Зберігає пул тільки для поточної групи.
+    Зберігає пул карт поточної групи.
     """
 
     all_cards = load_cards()
@@ -118,30 +124,68 @@ def save_chat_pool(update: Update, pool):
 
 
 # ============================================================
-# НОРМАЛІЗАЦІЯ КАРТИ
+# НОРМАЛІЗАЦІЯ КАРТ
 # ============================================================
 
 def normalize_card(card):
     """
-    Прибирає пробіли, дефіси та зірочки Markdown.
+    Нормалізація звичайної карти.
 
-    4149 4975 1915 1072
-    ->
-    4149497519151072
+    Прибирає:
+    - пробіли
+    - дефіси
+    - зірочки
 
-    4149-4975-1915-1072
-    ->
-    4149497519151072
+    Наприклад:
 
-    **4441 1110 6904 2608
+    4441 1110 2437 6760
+    4441-1110-2437-6760
+    4441111024376760
+
     ->
-    4441111069042608
+
+    4441111024376760
     """
+
+    if not card:
+        return ""
 
     card = card.strip()
 
-    # Прибираємо Markdown *
+    # Telegram Markdown
+    card = card.replace("**", "")
+
+    # Прибираємо пробіли та дефіси
+    card = re.sub(r"[\s-]", "", card)
+
+    # Зірочки прибираємо тільки для звичайної карти
     card = card.replace("*", "")
+
+    return card
+
+
+def normalize_pattern(card):
+    """
+    Нормалізація шаблону карти.
+
+    Наприклад:
+
+    4441****2608
+    4441 **** 2608
+    4441-****-2608
+
+    ->
+
+    4441****2608
+    """
+
+    if not card:
+        return ""
+
+    card = card.strip()
+
+    # Telegram Markdown
+    card = card.replace("**", "")
 
     # Прибираємо пробіли та дефіси
     card = re.sub(r"[\s-]", "", card)
@@ -150,36 +194,12 @@ def normalize_card(card):
 
 
 # ============================================================
-# НОРМАЛІЗАЦІЯ КАРТИ З МАСКОЮ
-# ============================================================
-
-def normalize_pattern(card):
-    """
-    Нормалізація карти, яка може містити * як маску.
-
-    Наприклад:
-
-    4441 **** 2608
-    ->
-    4441****2608
-    """
-
-    card = card.strip()
-
-    card = re.sub(r"[\s-]", "", card)
-
-    return card
-
-
-# ============================================================
-# ПЕРЕВІРКА КАРТИ
+# ПЕРЕВІРКА КАРТ
 # ============================================================
 
 def is_valid_card(card):
     """
-    Перевіряє звичайну карту.
-
-    Дозволено 13-19 цифр.
+    Перевіряє звичайний номер карти.
     """
 
     normalized = normalize_card(card)
@@ -193,13 +213,9 @@ def is_valid_card(card):
     return True
 
 
-# ============================================================
-# ПЕРЕВІРКА МАСКИ
-# ============================================================
-
 def is_valid_pattern(card):
     """
-    Перевіряє карту з маскою.
+    Перевіряє шаблон карти із *.
 
     Наприклад:
 
@@ -208,7 +224,7 @@ def is_valid_pattern(card):
 
     normalized = normalize_pattern(card)
 
-    if not re.fullmatch(r"[\d*]+", normalized):
+    if not re.fullmatch(r"[\d\*]+", normalized):
         return False
 
     digit_count = sum(c.isdigit() for c in normalized)
@@ -216,14 +232,14 @@ def is_valid_pattern(card):
     if digit_count < 4:
         return False
 
-    if len(normalized) < 13 or len(normalized) > 19:
+    if not 13 <= len(normalized) <= 19:
         return False
 
     return True
 
 
 # ============================================================
-# ПОРІВНЯННЯ ДВОХ КАРТ
+# ПОРІВНЯННЯ КАРТ
 # ============================================================
 
 def cards_match(pattern, actual):
@@ -234,13 +250,13 @@ def cards_match(pattern, actual):
 
     Наприклад:
 
-    4441111024376760
-    =
-    4441111024376760
+    4441****2608
 
-    4441****2437****
-    =
-    4441123424379876
+    буде збігатися з:
+
+    444112342608
+
+    якщо довжина та інші цифри збігаються.
     """
 
     pattern = normalize_pattern(pattern)
@@ -261,12 +277,12 @@ def cards_match(pattern, actual):
 
 
 # ============================================================
-# ПОШУК КАРТ У ТЕКСТІ
+# ПОШУК КАРТ У ПОВІДОМЛЕННІ
 # ============================================================
 
 def extract_cards(text):
     """
-    Витягує реальні номери карт з тексту.
+    Витягує номери карт із повідомлення.
 
     Підтримує:
 
@@ -275,8 +291,6 @@ def extract_cards(text):
     4441 1110 2437 6760
 
     4441-1110-2437-6760
-
-    **4441 1110 2437 6760
     """
 
     if not text:
@@ -285,7 +299,9 @@ def extract_cards(text):
     result = []
 
     # --------------------------------------------------------
-    # 1. Карти з пробілами або дефісами
+    # Варіант:
+    # 4441 1110 2437 6760
+    # 4441-1110-2437-6760
     # --------------------------------------------------------
 
     pattern = r"(?<!\d)(?:\d{4}[\s-]?){3}\d{4}(?!\d)"
@@ -300,7 +316,8 @@ def extract_cards(text):
             result.append(card)
 
     # --------------------------------------------------------
-    # 2. Суцільні номери карт 13-19 цифр
+    # Варіант:
+    # 4441111024376760
     # --------------------------------------------------------
 
     pattern = r"(?<!\d)\d{13,19}(?!\d)"
@@ -314,15 +331,351 @@ def extract_cards(text):
         if is_valid_card(card):
             result.append(card)
 
-    # --------------------------------------------------------
     # Прибираємо дублікати
-    # --------------------------------------------------------
-
     return list(dict.fromkeys(result))
 
 
 # ============================================================
-# ПОШУК ЗБІГУ В ПУЛІ
+# ІНФОРМАЦІЯ ПРО КОРИСТУВАЧА
+# ============================================================
+
+def get_user_name(user):
+    """
+    Повертає ім'я користувача.
+    """
+
+    if not user:
+        return "Невідомий користувач"
+
+    if user.full_name:
+        return user.full_name
+
+    if user.username:
+        return f"@{user.username}"
+
+    return str(user.id)
+
+
+# ============================================================
+# /START
+# ============================================================
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    await update.message.reply_text(
+        "🤖 Бот працює.\n\n"
+        "Доступні команди:\n\n"
+        "/pereplata — додати карту до пулу\n"
+        "/cards — показати карти групи\n"
+        "/delcard <карта> — видалити карту\n"
+        "/cancel — скасувати поточну дію"
+    )
+
+
+# ============================================================
+# /CANCEL
+# ============================================================
+
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    context.user_data.pop("pereplata", None)
+
+    await update.message.reply_text(
+        "❌ Дію скасовано."
+    )
+
+
+# ============================================================
+# /PEREPLATA
+# ============================================================
+
+async def pereplata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_chat.type not in ["group", "supergroup"]:
+
+        await update.message.reply_text(
+            "❌ Цю команду потрібно використовувати "
+            "в Telegram-групі."
+        )
+
+        return
+
+    # Починаємо процес додавання карти
+    context.user_data["pereplata"] = {
+        "step": "card"
+    }
+
+    await update.message.reply_text(
+        "💳 Введіть номер карти.\n\n"
+        "Приклад:\n"
+        "4441111024376760\n\n"
+        "Також можна:\n"
+        "4441 1110 2437 6760\n"
+        "4441-1110-2437-6760\n\n"
+        "Для скасування напишіть /cancel"
+    )
+
+
+# ============================================================
+# ОБРОБКА /PEREPLATA
+# ============================================================
+
+async def process_pereplata(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    message = update.message
+
+    if not message:
+        return False
+
+    user = update.effective_user
+
+    text = message.text
+
+    if not text:
+        return False
+
+    text = text.strip()
+
+    session = context.user_data.get("pereplata")
+
+    # Немає активної операції
+    if not session:
+        return False
+
+    # ========================================================
+    # КРОК 1 — ВВЕДЕННЯ КАРТИ
+    # ========================================================
+
+    if session["step"] == "card":
+
+        # ----------------------------------------------------
+        # ВАЖЛИВО:
+        # Тут ми НЕ використовуємо extract_cards().
+        #
+        # Беремо весь текст, який ввів користувач,
+        # і очищаємо його.
+        # ----------------------------------------------------
+
+        card = normalize_card(text)
+
+        # Перевірка
+        if not card.isdigit() or not 13 <= len(card) <= 19:
+
+            await message.reply_text(
+                "❌ Не вдалося розпізнати карту.\n\n"
+                "Введіть номер ще раз.\n\n"
+                "Наприклад:\n"
+                "4441111024376760\n\n"
+                "Також можна:\n"
+                "4441 1110 2437 6760\n"
+                "4441-1110-2437-6760"
+            )
+
+            return True
+
+        # ----------------------------------------------------
+        # Перевіряємо, чи є карта в пулі цієї групи
+        # ----------------------------------------------------
+
+        pool = get_chat_pool(update)
+
+        for item in pool:
+
+            if cards_match(item["card"], card):
+
+                await message.reply_text(
+                    "⚠️ Така карта вже є у пулі цієї групи.\n\n"
+                    f"💳 {item['card']}\n"
+                    f"📝 {item['description']}"
+                )
+
+                context.user_data.pop("pereplata", None)
+
+                return True
+
+        # ----------------------------------------------------
+        # Переводимо процес на введення опису
+        # ----------------------------------------------------
+
+        context.user_data["pereplata"] = {
+            "step": "description",
+            "card": card
+        }
+
+        await message.reply_text(
+            f"💳 Карту отримано:\n"
+            f"{card}\n\n"
+            "📝 Тепер введіть опис карти.\n\n"
+            "Приклад:\n"
+            "Заказ 7893747 перплата Андрій 789грн\n\n"
+            "Для скасування напишіть /cancel"
+        )
+
+        return True
+
+    # ========================================================
+    # КРОК 2 — ВВЕДЕННЯ ОПИСУ
+    # ========================================================
+
+    if session["step"] == "description":
+
+        description = text
+
+        if not description:
+
+            await message.reply_text(
+                "❌ Опис не може бути порожнім.\n\n"
+                "Введіть опис ще раз."
+            )
+
+            return True
+
+        # Отримуємо пул поточної групи
+        pool = get_chat_pool(update)
+
+        # Створюємо нову карту
+        new_card = {
+            "card": session["card"],
+            "description": description,
+            "added_by": get_user_name(user),
+            "user_id": user.id
+        }
+
+        # Додаємо карту
+        pool.append(new_card)
+
+        # Зберігаємо
+        save_chat_pool(update, pool)
+
+        # Завершуємо процес
+        context.user_data.pop("pereplata", None)
+
+        await message.reply_text(
+            "✅ КАРТУ ДОДАНО ДО ПУЛУ ЦІЄЇ ГРУПИ\n\n"
+            f"💳 {new_card['card']}\n"
+            f"📝 {new_card['description']}\n"
+            f"👤 Додав: {new_card['added_by']}"
+        )
+
+        return True
+
+    return False
+
+
+# ============================================================
+# /CARDS
+# ============================================================
+
+async def cards_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_chat.type not in ["group", "supergroup"]:
+
+        await update.message.reply_text(
+            "❌ Цю команду потрібно використовувати "
+            "в Telegram-групі."
+        )
+
+        return
+
+    pool = get_chat_pool(update)
+
+    if not pool:
+
+        await update.message.reply_text(
+            "📭 У пулі цієї групи поки немає карт."
+        )
+
+        return
+
+    response = "💳 КАРТИ ЦІЄЇ ГРУПИ\n\n"
+
+    for index, item in enumerate(pool, start=1):
+
+        response += (
+            f"{index}. 💳 {item['card']}\n"
+            f"📝 {item['description']}\n"
+            f"👤 {item.get('added_by', 'Невідомо')}\n\n"
+        )
+
+    await update.message.reply_text(response)
+
+
+# ============================================================
+# /DELCARD
+# ============================================================
+
+async def delcard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_chat.type not in ["group", "supergroup"]:
+
+        await update.message.reply_text(
+            "❌ Цю команду потрібно використовувати "
+            "в Telegram-групі."
+        )
+
+        return
+
+    # Перевіряємо аргумент
+    if not context.args:
+
+        await update.message.reply_text(
+            "❌ Вкажіть карту для видалення.\n\n"
+            "Приклад:\n"
+            "/delcard 4441111024376760"
+        )
+
+        return
+
+    card_to_delete = normalize_card(" ".join(context.args))
+
+    if not card_to_delete:
+
+        await update.message.reply_text(
+            "❌ Некоректний номер карти."
+        )
+
+        return
+
+    pool = get_chat_pool(update)
+
+    if not pool:
+
+        await update.message.reply_text(
+            "📭 У пулі цієї групи немає карт."
+        )
+
+        return
+
+    deleted = None
+
+    for item in pool:
+
+        if cards_match(item["card"], card_to_delete):
+
+            deleted = item
+            break
+
+    if not deleted:
+
+        await update.message.reply_text(
+            "❌ Такої карти немає у пулі цієї групи."
+        )
+
+        return
+
+    pool.remove(deleted)
+
+    save_chat_pool(update, pool)
+
+    await update.message.reply_text(
+        "🗑 КАРТУ ВИДАЛЕНО\n\n"
+        f"💳 {deleted['card']}\n"
+        f"📝 {deleted['description']}"
+    )
+
+
+# ============================================================
+# ПОШУК ЗБІГІВ У ЗВИЧАЙНИХ ПОВІДОМЛЕННЯХ
 # ============================================================
 
 def find_matches(update: Update, text):
@@ -343,10 +696,7 @@ def find_matches(update: Update, text):
 
         for pool_card in pool:
 
-            if cards_match(
-                pool_card["card"],
-                detected_card
-            ):
+            if cards_match(pool_card["card"], detected_card):
 
                 matches.append({
                     "detected": detected_card,
@@ -357,376 +707,10 @@ def find_matches(update: Update, text):
 
 
 # ============================================================
-# ІМ'Я КОРИСТУВАЧА
-# ============================================================
-
-def get_user_name(user):
-
-    if user.username:
-        return f"@{user.username}"
-
-    name = " ".join(
-        filter(
-            None,
-            [
-                user.first_name,
-                user.last_name
-            ]
-        )
-    )
-
-    if name:
-        return name
-
-    return str(user.id)
-
-
-# ============================================================
-# /START
-# ============================================================
-
-async def start_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    text = (
-        "🤖 Бот перевірки карт з переплат\n\n"
-        "Доступні команди:\n\n"
-        "/pereplata — додати карту в пул\n"
-        "/cards — переглянути пул цієї групи\n"
-        "/delcard — видалити карту\n"
-        "/cancel — скасувати поточну дію\n\n"
-    )
-
-    await update.message.reply_text(text)
-
-
-# ============================================================
-# /PEREPLATA
-# ============================================================
-
-async def pereplata_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    # Працюємо тільки в групах
-    if update.effective_chat.type not in [
-        "group",
-        "supergroup"
-    ]:
-
-        await update.message.reply_text(
-            "❌ Цю команду потрібно використовувати "
-            "в Telegram-групі."
-        )
-
-        return
-
-    context.user_data["pereplata"] = {
-        "step": "card"
-    }
-
-    await update.message.reply_text(
-        "💳 Введіть номер карти.\n\n"
-        "Приклад:\n"
-        "4441111024376760\n\n"
-        "Також можна:\n"
-        "4441 1110 2437 6760\n"
-        "4441-1110-2437-6760\n\n"
-        "Для скасування напишіть /cancel"
-    )
-
-
-# ============================================================
-# /CANCEL
-# ============================================================
-
-async def cancel_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    context.user_data.pop(
-        "pereplata",
-        None
-    )
-
-    await update.message.reply_text(
-        "❌ Дію скасовано."
-    )
-
-
-# ============================================================
-# /CARDS
-# ============================================================
-
-async def cards_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    if update.effective_chat.type not in [
-        "group",
-        "supergroup"
-    ]:
-
-        await update.message.reply_text(
-            "❌ Цю команду потрібно використовувати "
-            "в Telegram-групі."
-        )
-
-        return
-
-    cards = get_chat_pool(update)
-
-    if not cards:
-
-        await update.message.reply_text(
-            "📋 Пул карт цієї групи порожній."
-        )
-
-        return
-
-    text = "📋 ПУЛ КАРТ ЦІЄЇ ГРУПИ\n\n"
-
-    for index, card in enumerate(
-        cards,
-        start=1
-    ):
-
-        text += (
-            f"{index}. 💳 {card['card']}\n"
-            f"   📝 {card['description']}\n"
-            f"   👤 Додав: {card.get('added_by', 'Невідомо')}\n\n"
-        )
-
-    text += f"Всього карт: {len(cards)}"
-
-    await update.message.reply_text(text)
-
-
-# ============================================================
-# /DELCARD
-# ============================================================
-
-async def delcard_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    if update.effective_chat.type not in [
-        "group",
-        "supergroup"
-    ]:
-
-        await update.message.reply_text(
-            "❌ Цю команду потрібно використовувати "
-            "в Telegram-групі."
-        )
-
-        return
-
-    if not context.args:
-
-        await update.message.reply_text(
-            "❌ Вкажіть карту.\n\n"
-            "Приклад:\n"
-            "/delcard 4441111024376760"
-        )
-
-        return
-
-    card = normalize_card(
-        " ".join(context.args)
-    )
-
-    cards = get_chat_pool(update)
-
-    found = None
-
-    for item in cards:
-
-        if normalize_card(
-            item["card"]
-        ) == card:
-
-            found = item
-            break
-
-    if not found:
-
-        await update.message.reply_text(
-            "❌ Такої карти немає у пулі цієї групи."
-        )
-
-        return
-
-    cards.remove(found)
-
-    save_chat_pool(
-        update,
-        cards
-    )
-
-    await update.message.reply_text(
-        "🗑️ КАРТУ ВИДАЛЕНО\n\n"
-        f"💳 {found['card']}\n"
-        f"📝 {found['description']}"
-    )
-
-
-# ============================================================
-# ДОДАВАННЯ КАРТИ
-# ============================================================
-
-async def process_pereplata(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    message = update.message
-    user = update.effective_user
-
-    text = message.text.strip()
-
-    session = context.user_data.get(
-        "pereplata"
-    )
-
-    if not session:
-        return False
-
-    # ========================================================
-    # КРОК 1 — КАРТА
-    # ========================================================
-
-    if session["step"] == "card":
-
-        cards = extract_cards(text)
-
-        if len(cards) == 0:
-
-            await message.reply_text(
-                "❌ Не вдалося розпізнати карту.\n\n"
-                "Введіть номер ще раз.\n\n"
-                "Наприклад:\n"
-                "4441111024376760"
-            )
-
-            return True
-
-        if len(cards) > 1:
-
-            await message.reply_text(
-                "❌ Я знайшов декілька карт.\n\n"
-                "Введіть тільки одну карту."
-            )
-
-            return True
-
-        card = cards[0]
-
-        # ----------------------------------------------------
-        # Перевіряємо, чи карта вже є У ЦІЙ ГРУПІ
-        # ----------------------------------------------------
-
-        pool = get_chat_pool(update)
-
-        for item in pool:
-
-            if cards_match(
-                item["card"],
-                card
-            ):
-
-                await message.reply_text(
-                    "⚠️ Така карта вже є у пулі цієї групи.\n\n"
-                    f"💳 {item['card']}\n"
-                    f"📝 {item['description']}"
-                )
-
-                context.user_data.pop(
-                    "pereplata",
-                    None
-                )
-
-                return True
-
-        context.user_data["pereplata"] = {
-            "step": "description",
-            "card": card
-        }
-
-        await message.reply_text(
-            f"💳 Карту отримано:\n"
-            f"{card}\n\n"
-            "📝 Тепер введіть опис карти.\n\n"
-            "Приклад:\n"
-            "Заказ 7893747 перплата Андрій 789грн\n\n"
-            "Для скасування напишіть /cancel"
-        )
-
-        return True
-
-    # ========================================================
-    # КРОК 2 — ОПИС
-    # ========================================================
-
-    if session["step"] == "description":
-
-        description = text
-
-        if not description:
-
-            await message.reply_text(
-                "❌ Опис не може бути порожнім."
-            )
-
-            return True
-
-        cards = get_chat_pool(update)
-
-        new_card = {
-            "card": session["card"],
-            "description": description,
-            "added_by": get_user_name(user),
-            "user_id": user.id
-        }
-
-        cards.append(new_card)
-
-        save_chat_pool(
-            update,
-            cards
-        )
-
-        context.user_data.pop(
-            "pereplata",
-            None
-        )
-
-        await message.reply_text(
-            "✅ КАРТУ ДОДАНО ДО ПУЛУ ЦІЄЇ ГРУПИ\n\n"
-            f"💳 {new_card['card']}\n"
-            f"📝 {new_card['description']}\n"
-            f"👤 Додав: {new_card['added_by']}"
-        )
-
-        return True
-
-    return False
-
-
-# ============================================================
 # ОБРОБКА ЗВИЧАЙНИХ ПОВІДОМЛЕНЬ
 # ============================================================
 
-async def message_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not update.message:
         return
@@ -738,38 +722,32 @@ async def message_handler(
     if not text:
         return
 
-    # ========================================================
-    # СПОЧАТКУ ПЕРЕВІРЯЄМО ДОДАВАННЯ КАРТИ
-    # ========================================================
+    # --------------------------------------------------------
+    # Спочатку перевіряємо, чи людина зараз додає карту
+    # --------------------------------------------------------
 
-    if await process_pereplata(
-        update,
-        context
-    ):
+    if await process_pereplata(update, context):
         return
 
-    # ========================================================
-    # КОМАНДИ НЕ ПЕРЕВІРЯЄМО
-    # ========================================================
+    # --------------------------------------------------------
+    # Команди тут не обробляємо
+    # --------------------------------------------------------
 
     if text.startswith("/"):
         return
 
-    # ========================================================
-    # ШУКАЄМО КАРТИ
-    # ========================================================
+    # --------------------------------------------------------
+    # Шукаємо карти у звичайному повідомленні
+    # --------------------------------------------------------
 
-    matches = find_matches(
-        update,
-        text
-    )
+    matches = find_matches(update, text)
 
     if not matches:
         return
 
-    # ========================================================
-    # ПРИБИРАЄМО ДУБЛІКАТИ
-    # ========================================================
+    # --------------------------------------------------------
+    # Прибираємо дублікати
+    # --------------------------------------------------------
 
     unique_matches = {}
 
@@ -782,13 +760,11 @@ async def message_handler(
 
         unique_matches[card_id] = match
 
-    # ========================================================
-    # ФОРМУЄМО ПОВІДОМЛЕННЯ
-    # ========================================================
+    # --------------------------------------------------------
+    # Формуємо відповідь
+    # --------------------------------------------------------
 
-    response = (
-        "🚨 ЗНАЙДЕНО КАРТУ З ПУЛУ\n\n"
-    )
+    response = "🚨 ЗНАЙДЕНО КАРТУ З ПУЛУ\n\n"
 
     for match in unique_matches.values():
 
@@ -799,12 +775,18 @@ async def message_handler(
             f"📝 Опис: {pool_card['description']}\n\n"
         )
 
-    # ========================================================
-    # ВІДПОВІДАЄМО НА ПОВІДОМЛЕННЯ
-    # ========================================================
+    await message.reply_text(response)
 
-    await message.reply_text(
-        response
+
+# ============================================================
+# ПОМИЛКИ
+# ============================================================
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+
+    logger.error(
+        "Помилка під час обробки update:",
+        exc_info=context.error
     )
 
 
@@ -816,63 +798,35 @@ def main():
 
     if not BOT_TOKEN:
 
-        print(
-            "❌ BOT_TOKEN не знайдено!"
+        raise RuntimeError(
+            "BOT_TOKEN не знайдено. "
+            "Перевір змінну BOT_TOKEN."
         )
 
-        print(
-            "Перевір файл .env"
-        )
-
-        return
-
-    print(
-        "🤖 Запуск бота..."
-    )
-
-    application = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .build()
-    )
+    application = Application.builder().token(BOT_TOKEN).build()
 
     # --------------------------------------------------------
     # Команди
     # --------------------------------------------------------
 
     application.add_handler(
-        CommandHandler(
-            "start",
-            start_command
-        )
+        CommandHandler("start", start_command)
     )
 
     application.add_handler(
-        CommandHandler(
-            "pereplata",
-            pereplata_command
-        )
+        CommandHandler("pereplata", pereplata_command)
     )
 
     application.add_handler(
-        CommandHandler(
-            "cards",
-            cards_command
-        )
+        CommandHandler("cards", cards_command)
     )
 
     application.add_handler(
-        CommandHandler(
-            "delcard",
-            delcard_command
-        )
+        CommandHandler("delcard", delcard_command)
     )
 
     application.add_handler(
-        CommandHandler(
-            "cancel",
-            cancel_command
-        )
+        CommandHandler("cancel", cancel_command)
     )
 
     # --------------------------------------------------------
@@ -886,14 +840,26 @@ def main():
         )
     )
 
-    print(
-        "✅ Бот запущений!"
-    )
+    # --------------------------------------------------------
+    # Обробник помилок
+    # --------------------------------------------------------
+
+    application.add_error_handler(error_handler)
+
+    # --------------------------------------------------------
+    # Запуск
+    # --------------------------------------------------------
+
+    logger.info("Бот запущений.")
 
     application.run_polling(
         allowed_updates=Update.ALL_TYPES
     )
 
+
+# ============================================================
+# START
+# ============================================================
 
 if __name__ == "__main__":
     main()

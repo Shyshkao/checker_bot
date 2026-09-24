@@ -23,6 +23,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 CARDS_FILE = Path("data/cards.json")
+CARDS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",

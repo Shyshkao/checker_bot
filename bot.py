@@ -25,18 +25,21 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+# Основна база карт для /pereplata
 CARDS_FILE = Path("data/cards.json")
-REQUESTS_FILE = Path("data/requests.json")
 
+# ОКРЕМА база для антидубля заявок
+DUPLICATE_CARDS_FILE = Path("data/duplicate_cards.json")
+
+# Створюємо папку data, якщо її немає
 CARDS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-
-# Час України
+# Український час
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 
 # ============================================================
-# РОБОТА З ОСНОВНОЮ БАЗОЮ КАРТ
+# ОСНОВНА БАЗА КАРТ
 # ============================================================
 
 def load_cards():
@@ -44,7 +47,12 @@ def load_cards():
         return {}
 
     try:
-        with open(CARDS_FILE, "r", encoding="utf-8") as file:
+        with open(
+            CARDS_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
             data = json.load(file)
 
             if isinstance(data, list):
@@ -60,44 +68,19 @@ def load_cards():
 
 
 def save_cards(cards):
-    CARDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CARDS_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
-    with open(CARDS_FILE, "w", encoding="utf-8") as file:
+    with open(
+        CARDS_FILE,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
         json.dump(
             cards,
-            file,
-            ensure_ascii=False,
-            indent=4
-        )
-
-
-# ============================================================
-# РОБОТА З БАЗОЮ ДУБЛІВ
-# ============================================================
-
-def load_requests():
-    if not REQUESTS_FILE.exists():
-        return {}
-
-    try:
-        with open(REQUESTS_FILE, "r", encoding="utf-8") as file:
-            data = json.load(file)
-
-            if isinstance(data, dict):
-                return data
-
-            return {}
-
-    except (json.JSONDecodeError, FileNotFoundError):
-        return {}
-
-
-def save_requests(requests):
-    REQUESTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(REQUESTS_FILE, "w", encoding="utf-8") as file:
-        json.dump(
-            requests,
             file,
             ensure_ascii=False,
             indent=4
@@ -118,7 +101,7 @@ def get_chat_id(update: Update):
 
 
 # ============================================================
-# ОСНОВНА БАЗА КАРТ ПО ГРУПАХ
+# БАЗА КАРТ ОКРЕМО ДЛЯ КОЖНОЇ ГРУПИ
 # ============================================================
 
 def get_chat_pool(update: Update):
@@ -146,20 +129,21 @@ def save_chat_pool(update: Update, pool):
 
 
 # ============================================================
-# НОРМАЛІЗАЦІЯ КАРТ
+# НОРМАЛІЗАЦІЯ КАРТИ
 # ============================================================
 
 def normalize_card(card):
     """
     Перетворює:
 
-    4441 1111 2222 3333
-    4441-1111-2222-3333
-    4441111122223333
+    5355 2800 3668 8131
+    5355-2800-3668-8131
+    **5355 2800 3668 8131**
+    `5355280036688131`
 
     у:
 
-    4441111122223333
+    5355280036688131
     """
 
     if not card:
@@ -167,12 +151,12 @@ def normalize_card(card):
 
     card = str(card).strip()
 
-    # Прибираємо Telegram Markdown
+    # Telegram Markdown
     card = card.replace("**", "")
     card = card.replace("__", "")
     card = card.replace("`", "")
 
-    # Прибираємо пробіли та дефіси
+    # Пробіли та дефіси
     card = re.sub(r"[\s-]", "", card)
 
     return card
@@ -215,7 +199,10 @@ def is_valid_pattern(card):
     if not re.fullmatch(r"[\d\*]+", normalized):
         return False
 
-    digit_count = sum(c.isdigit() for c in normalized)
+    digit_count = sum(
+        c.isdigit()
+        for c in normalized
+    )
 
     if digit_count < 4:
         return False
@@ -249,21 +236,26 @@ def cards_match(pattern, actual):
 
 
 # ============================================================
-# ПОШУК КАРТ У ПОВІДОМЛЕННІ
+# ПОШУК КАРТ У БУДЬ-ЯКОМУ ПОВІДОМЛЕННІ
 # ============================================================
 
 def extract_cards(text):
     """
-    Шукає картки в будь-якому тексті.
+    Дістає карти з будь-якого повідомлення.
 
     Підтримує:
 
-    4441111122223333
-    4441 1111 2222 3333
-    4441-1111-2222-3333
+    5355280036688131
 
-    Також знаходить карту просто в повідомленні
-    без будь-яких додаткових слів.
+    5355 2800 3668 8131
+
+    5355-2800-3668-8131
+
+    **5355 2800 3668 8131**
+
+    `5355280036688131`
+
+    Тип заявки НЕ має значення.
     """
 
     if not text:
@@ -272,15 +264,20 @@ def extract_cards(text):
     result = []
 
     # --------------------------------------------------------
-    # Варіант 1:
-    # 4441 1111 2222 3333
-    # 4441-1111-2222-3333
-    # 4441111122223333
+    # КАРТА ПО 4 ЦИФРИ
     # --------------------------------------------------------
 
-    pattern = r"(?<!\d)(?:\d{4}[\s-]?){3}\d{4}(?!\d)"
+    pattern_grouped = (
+        r"(?<!\d)"
+        r"(?:\d{4}[\s-]?){3}"
+        r"\d{4}"
+        r"(?!\d)"
+    )
 
-    matches = re.findall(pattern, text)
+    matches = re.findall(
+        pattern_grouped,
+        text
+    )
 
     for match in matches:
 
@@ -290,13 +287,19 @@ def extract_cards(text):
             result.append(card)
 
     # --------------------------------------------------------
-    # Варіант 2:
-    # будь-яка суцільна послідовність 13-19 цифр
+    # СУЦІЛЬНА КАРТА 13-19 ЦИФР
     # --------------------------------------------------------
 
-    pattern = r"(?<!\d)\d{13,19}(?!\d)"
+    pattern_plain = (
+        r"(?<!\d)"
+        r"\d{13,19}"
+        r"(?!\d)"
+    )
 
-    matches = re.findall(pattern, text)
+    matches = re.findall(
+        pattern_plain,
+        text
+    )
 
     for match in matches:
 
@@ -305,197 +308,281 @@ def extract_cards(text):
         if is_valid_card(card):
             result.append(card)
 
-    # Прибираємо дублікати
+    # --------------------------------------------------------
+    # УНІКАЛЬНІ КАРТИ
+    # --------------------------------------------------------
+
     return list(dict.fromkeys(result))
 
 
 # ============================================================
-# ДУБЛІ ЗА КАРТКОЮ
 # ============================================================
+# АНТИДУБЛЬ КАРТ
+# ============================================================
+# ============================================================
+
+def load_duplicate_cards():
+    """
+    Окрема база антидубля.
+
+    Структура:
+
+    {
+        "CHAT_ID": {
+            "2026-10-08": {
+                "5355280036688131": {
+                    "message_ids": [123, 456]
+                }
+            }
+        }
+    }
+    """
+
+    if not DUPLICATE_CARDS_FILE.exists():
+        return {}
+
+    try:
+        with open(
+            DUPLICATE_CARDS_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
+            data = json.load(file)
+
+            if isinstance(data, dict):
+                return data
+
+            return {}
+
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {}
+
+
+def save_duplicate_cards(data):
+    DUPLICATE_CARDS_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    with open(
+        DUPLICATE_CARDS_FILE,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            data,
+            file,
+            ensure_ascii=False,
+            indent=4
+        )
+
 
 def get_today():
     """
-    Повертає сьогоднішню дату саме за київським часом.
+    Сьогоднішня дата за київським часом.
     """
 
-    return datetime.now(KYIV_TZ).strftime("%Y-%m-%d")
+    return datetime.now(
+        KYIV_TZ
+    ).strftime("%Y-%m-%d")
 
 
-def cleanup_old_requests(requests):
+def cleanup_duplicate_history(data):
     """
-    Залишаємо тільки сьогоднішні записи.
-
-    Старі дні більше не потрібні для антидубля.
+    Видаляємо всі старі дні.
+    Для антидубля нам потрібні
+    тільки заявки за сьогодні.
     """
 
     today = get_today()
 
     changed = False
 
-    for chat_id in list(requests.keys()):
+    for chat_id in list(data.keys()):
 
-        chat_data = requests.get(chat_id)
-
-        if not isinstance(chat_data, dict):
-            del requests[chat_id]
+        if not isinstance(
+            data[chat_id],
+            dict
+        ):
+            del data[chat_id]
             changed = True
             continue
 
-        for date_key in list(chat_data.keys()):
+        for date_key in list(
+            data[chat_id].keys()
+        ):
 
             if date_key != today:
-                del chat_data[date_key]
+
+                del data[chat_id][date_key]
+
                 changed = True
 
-        if not chat_data:
-            del requests[chat_id]
+        if not data[chat_id]:
+
+            del data[chat_id]
+
             changed = True
 
     return changed
 
 
-def check_duplicate_card(update: Update, card):
+def register_card_for_duplicate_check(
+    update: Update,
+    card: str
+):
     """
-    ГОЛОВНА ЛОГІКА АНТИДУБЛЯ.
+    ГОЛОВНА ФУНКЦІЯ АНТИДУБЛЯ.
 
-    Перевіряємо ВИКЛЮЧНО номер картки.
+    Перевіряється ТІЛЬКИ:
 
-    Неважливо:
-    - який текст заявки;
-    - яка сума;
-    - який ID;
-    - який курс;
-    - хто власник;
-    - чи це просто номер картки.
+        група
+        +
+        сьогодні
+        +
+        номер картки
 
-    Важливо тільки:
-
-    chat_id + сьогоднішня дата + номер картки
-    """
-
-    chat_id = get_chat_id(update)
-
-    if not chat_id:
-        return False, 0
-
-    card = normalize_card(card)
-
-    if not is_valid_card(card):
-        return False, 0
-
-    today = get_today()
-
-    requests = load_requests()
-
-    # --------------------------------------------------------
-    # Видаляємо старі дні
-    # --------------------------------------------------------
-
-    cleanup_old_requests(requests)
-
-    # --------------------------------------------------------
-    # Створюємо структуру
-    # --------------------------------------------------------
-
-    if chat_id not in requests:
-        requests[chat_id] = {}
-
-    if today not in requests[chat_id]:
-        requests[chat_id][today] = {}
-
-    today_cards = requests[chat_id][today]
-
-    # --------------------------------------------------------
-    # Перевіряємо картку
-    # --------------------------------------------------------
-
-    previous_count = today_cards.get(card, 0)
-
-    is_duplicate = previous_count > 0
-
-    # Додаємо поточне використання
-    today_cards[card] = previous_count + 1
-
-    save_requests(requests)
-
-    return is_duplicate, previous_count
-
-
-# ============================================================
-# ЗАПОБІГАННЯ ПОВТОРНІЙ ОБРОБЦІ ТОГО САМОГО TELEGRAM MESSAGE
-# ============================================================
-
-def message_was_processed(update: Update):
-    """
-    Якщо Telegram повторно доставить той самий message,
-    не будемо рахувати його як нову заявку.
+    Все інше ігнорується.
     """
 
     chat = update.effective_chat
     message = update.effective_message
 
     if not chat or not message:
-        return False
+        return False, 0
+
+    # Нормалізуємо картку
+    card = normalize_card(card)
+
+    if not is_valid_card(card):
+        return False, 0
 
     chat_id = str(chat.id)
-    message_id = str(message.message_id)
 
-    requests = load_requests()
-
-    if "__processed_messages__" not in requests:
-        requests["__processed_messages__"] = {}
-
-    processed = requests["__processed_messages__"]
-
-    if chat_id not in processed:
-        processed[chat_id] = {}
+    message_id = message.message_id
 
     today = get_today()
 
-    if today not in processed[chat_id]:
-        processed[chat_id][today] = []
+    # Завантажуємо базу
+    data = load_duplicate_cards()
 
-    today_messages = processed[chat_id][today]
+    # Видаляємо старі дні
+    cleanup_duplicate_history(data)
 
-    if message_id in today_messages:
-        return True
+    # --------------------------------------------------------
+    # Створюємо групу
+    # --------------------------------------------------------
 
-    today_messages.append(message_id)
+    if chat_id not in data:
 
-    # Щоб база не росла нескінченно
-    if len(today_messages) > 5000:
-        processed[chat_id][today] = today_messages[-5000:]
+        data[chat_id] = {}
 
-    save_requests(requests)
+    # --------------------------------------------------------
+    # Створюємо сьогоднішній день
+    # --------------------------------------------------------
 
-    return False
+    if today not in data[chat_id]:
+
+        data[chat_id][today] = {}
+
+    today_data = data[chat_id][today]
+
+    # --------------------------------------------------------
+    # ПЕРША ПОЯВА КАРТИ СЬОГОДНІ
+    # --------------------------------------------------------
+
+    if card not in today_data:
+
+        today_data[card] = {
+            "message_ids": [
+                message_id
+            ]
+        }
+
+        save_duplicate_cards(data)
+
+        return False, 0
+
+    # --------------------------------------------------------
+    # КАРТА ВЖЕ Є
+    # --------------------------------------------------------
+
+    card_data = today_data[card]
+
+    if not isinstance(
+        card_data,
+        dict
+    ):
+
+        card_data = {
+            "message_ids": []
+        }
+
+        today_data[card] = card_data
+
+    message_ids = card_data.get(
+        "message_ids",
+        []
+    )
+
+    # --------------------------------------------------------
+    # ТОЧНО ТЕ САМЕ TELEGRAM-ПОВІДОМЛЕННЯ
+    #
+    # Не рахуємо його повторно.
+    # --------------------------------------------------------
+
+    if message_id in message_ids:
+
+        save_duplicate_cards(data)
+
+        return False, max(
+            0,
+            len(message_ids) - 1
+        )
+
+    # --------------------------------------------------------
+    # НОВЕ ПОВІДОМЛЕННЯ З ТІЄЮ САМОЮ КАРТКОЮ
+    # --------------------------------------------------------
+
+    previous_count = len(
+        message_ids
+    )
+
+    message_ids.append(
+        message_id
+    )
+
+    card_data["message_ids"] = message_ids
+
+    save_duplicate_cards(data)
+
+    return True, previous_count
 
 
-# ============================================================
-# АНТИДУБЛЬ ПОВІДОМЛЕННЯ
-# ============================================================
-
-async def process_duplicate_check(update: Update, text):
+async def process_duplicate_check(
+    update: Update,
+    text: str
+):
     """
-    Просто шукаємо картки в повідомленні.
+    Перевірка антидубля.
 
-    НЕ перевіряємо, чи це "схоже на заявку".
+    Немає жодної перевірки типу заявки.
 
-    Це принципово.
+    Бот просто:
+
+    1. Отримує повідомлення.
+    2. Дістає з нього карти.
+    3. Для кожної карти перевіряє сьогоднішню історію.
+    4. Якщо карта вже була — попередження.
     """
 
     if not text:
         return
 
     # --------------------------------------------------------
-    # Не обробляємо один і той самий Telegram message двічі
-    # --------------------------------------------------------
-
-    if message_was_processed(update):
-        return
-
-    # --------------------------------------------------------
-    # Шукаємо картки
+    # Дістаємо ВСІ карти з повідомлення
     # --------------------------------------------------------
 
     cards = extract_cards(text)
@@ -504,48 +591,59 @@ async def process_duplicate_check(update: Update, text):
         return
 
     # --------------------------------------------------------
-    # Перевіряємо кожну знайдену картку
+    # Перевіряємо кожну карту
     # --------------------------------------------------------
 
     for card in cards:
 
-        is_duplicate, previous_count = check_duplicate_card(
-            update,
-            card
+        is_duplicate, previous_count = (
+            register_card_for_duplicate_check(
+                update,
+                card
+            )
         )
 
+        # Перша поява
         if not is_duplicate:
             continue
 
         # ----------------------------------------------------
-        # Знайдено дубль
+        # ДРУГА / НАСТУПНА ПОЯВА
         # ----------------------------------------------------
 
         warning = (
-            "🚨 **УВАГА — МОЖЛИВЕ ЗАДВОЄННЯ!**\n\n"
+            "🚨 **МОЖЛИВЕ ЗАДВОЄННЯ ЗАЯВКИ!**\n\n"
             f"💳 Карта: `{card}`\n\n"
-            "⚠️ Ця карта вже зустрічалась у заявці "
-            "сьогодні.\n\n"
-            f"📊 Попередніх появ сьогодні: {previous_count}\n\n"
-            "❗ Перевірте, будь ласка, чи не задвоєна "
-            "заявка перед проведенням оплати."
+            "⚠️ Ця картка вже зустрічалась "
+            "сьогодні в цій групі.\n\n"
+            f"📊 Попередніх появ: {previous_count}\n\n"
+            "❗ Перевірте картку перед проведенням оплати."
         )
 
         try:
+
             await update.effective_message.reply_text(
                 warning,
                 parse_mode="Markdown"
             )
 
         except Exception as e:
-            print(f"Помилка відправки попередження: {e}")
+
+            print(
+                f"Помилка відправки антидубля: {e}"
+            )
 
 
+# ============================================================
 # ============================================================
 # /PEREPLATA
 # ============================================================
+# ============================================================
 
-async def pereplata(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def pereplata(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     context.user_data["pereplata"] = {
         "step": "card"
@@ -557,12 +655,17 @@ async def pereplata(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# ОБРОБКА /PEREPLATA
+# ОБРОБКА PEREPLATA
 # ============================================================
 
-async def handle_pereplata(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_pereplata(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-    state = context.user_data.get("pereplata")
+    state = context.user_data.get(
+        "pereplata"
+    )
 
     if not state:
         return False
@@ -570,7 +673,7 @@ async def handle_pereplata(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
     # --------------------------------------------------------
-    # Крок 1 — номер картки
+    # КРОК 1 — КАРТКА
     # --------------------------------------------------------
 
     if state["step"] == "card":
@@ -586,21 +689,29 @@ async def handle_pereplata(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return True
 
+        # Отримуємо карти цієї групи
         pool = get_chat_pool(update)
 
-        # Перевіряємо, чи вже є така карта
+        # Перевіряємо дублювання в основній базі
         for item in pool:
 
-            saved_card = item.get("card", "")
+            saved_card = item.get(
+                "card",
+                ""
+            )
 
-            if cards_match(saved_card, card):
+            if cards_match(
+                saved_card,
+                card
+            ):
 
                 await update.message.reply_text(
-                    "⚠️ Ця картка вже є у базі."
+                    "⚠️ Ця картка вже є в базі."
                 )
 
                 return True
 
+        # Переходимо до опису
         context.user_data["pereplata"] = {
             "step": "description",
             "card": card
@@ -613,7 +724,7 @@ async def handle_pereplata(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return True
 
     # --------------------------------------------------------
-    # Крок 2 — опис
+    # КРОК 2 — ОПИС
     # --------------------------------------------------------
 
     if state["step"] == "description":
@@ -631,21 +742,35 @@ async def handle_pereplata(update: Update, context: ContextTypes.DEFAULT_TYPE):
             added_by = user.full_name
 
             if user.username:
-                added_by += f" (@{user.username})"
+
+                added_by += (
+                    f" (@{user.username})"
+                )
 
         else:
+
             added_by = "Невідомий користувач"
 
         pool.append({
             "card": card,
             "description": description,
             "added_by": added_by,
-            "user_id": user.id if user else None
+            "user_id": (
+                user.id
+                if user
+                else None
+            )
         })
 
-        save_chat_pool(update, pool)
+        save_chat_pool(
+            update,
+            pool
+        )
 
-        context.user_data.pop("pereplata", None)
+        context.user_data.pop(
+            "pereplata",
+            None
+        )
 
         await update.message.reply_text(
             "✅ Картку успішно додано!\n\n"
@@ -663,7 +788,10 @@ async def handle_pereplata(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /CARDS
 # ============================================================
 
-async def cards_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cards_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     pool = get_chat_pool(update)
 
@@ -675,13 +803,29 @@ async def cards_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    text = "💳 **КАРТИ ЦІЄЇ ГРУПИ**\n\n"
+    text = (
+        "💳 **КАРТИ ЦІЄЇ ГРУПИ**\n\n"
+    )
 
-    for index, item in enumerate(pool, start=1):
+    for index, item in enumerate(
+        pool,
+        start=1
+    ):
 
-        card = item.get("card", "")
-        description = item.get("description", "")
-        added_by = item.get("added_by", "")
+        card = item.get(
+            "card",
+            ""
+        )
+
+        description = item.get(
+            "description",
+            ""
+        )
+
+        added_by = item.get(
+            "added_by",
+            ""
+        )
 
         text += (
             f"{index}. `{card}`\n"
@@ -699,7 +843,10 @@ async def cards_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /DELCARD
 # ============================================================
 
-async def delcard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def delcard_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     if not context.args:
 
@@ -711,7 +858,11 @@ async def delcard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    card = normalize_card("".join(context.args))
+    card = normalize_card(
+        "".join(
+            context.args
+        )
+    )
 
     if not is_valid_card(card):
 
@@ -729,17 +880,28 @@ async def delcard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for item in pool:
 
-        saved_card = item.get("card", "")
+        saved_card = item.get(
+            "card",
+            ""
+        )
 
-        if cards_match(saved_card, card):
+        if cards_match(
+            saved_card,
+            card
+        ):
+
             deleted = True
+
             continue
 
         new_pool.append(item)
 
     if deleted:
 
-        save_chat_pool(update, new_pool)
+        save_chat_pool(
+            update,
+            new_pool
+        )
 
         await update.message.reply_text(
             f"✅ Картку `{card}` видалено.",
@@ -757,9 +919,15 @@ async def delcard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /CANCEL
 # ============================================================
 
-async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-    context.user_data.pop("pereplata", None)
+    context.user_data.pop(
+        "pereplata",
+        None
+    )
 
     await update.message.reply_text(
         "❌ Дію скасовано."
@@ -767,10 +935,13 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# ПОШУК КАРТ У БАЗІ
+# ПОШУК КАРТ У ОСНОВНІЙ БАЗІ
 # ============================================================
 
-async def check_saved_cards(update: Update, text):
+async def check_saved_cards(
+    update: Update,
+    text: str
+):
 
     cards = extract_cards(text)
 
@@ -786,9 +957,15 @@ async def check_saved_cards(update: Update, text):
 
         for item in pool:
 
-            saved_card = item.get("card", "")
+            saved_card = item.get(
+                "card",
+                ""
+            )
 
-            if not cards_match(saved_card, actual_card):
+            if not cards_match(
+                saved_card,
+                actual_card
+            ):
                 continue
 
             description = item.get(
@@ -842,7 +1019,7 @@ async def message_handler(
         return
 
     # --------------------------------------------------------
-    # Якщо зараз користувач проходить /pereplata
+    # PEREPLATA
     # --------------------------------------------------------
 
     handled = await handle_pereplata(
@@ -854,7 +1031,7 @@ async def message_handler(
         return
 
     # --------------------------------------------------------
-    # Команди не перевіряємо як заявки
+    # Команди не перевіряємо
     # --------------------------------------------------------
 
     if text.startswith("/"):
@@ -863,8 +1040,7 @@ async def message_handler(
     # --------------------------------------------------------
     # АНТИДУБЛЬ
     #
-    # Тут тепер НІЯКОГО looks_like_request().
-    #
+    # Тут немає перевірки типу заявки.
     # Будь-яке повідомлення з картою перевіряється.
     # --------------------------------------------------------
 
@@ -874,7 +1050,7 @@ async def message_handler(
     )
 
     # --------------------------------------------------------
-    # Стара функція пошуку карт у вашій базі
+    # ОСНОВНА БАЗА КАРТ
     # --------------------------------------------------------
 
     await check_saved_cards(
@@ -895,7 +1071,9 @@ def main():
             "BOT_TOKEN не знайдений у змінних середовища."
         )
 
-    print("🤖 Бот запускається...")
+    print(
+        "🤖 Бот запускається..."
+    )
 
     application = (
         ApplicationBuilder()
@@ -904,7 +1082,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Команди
+    # КОМАНДИ
     # --------------------------------------------------------
 
     application.add_handler(
@@ -936,7 +1114,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Звичайні повідомлення
+    # ЗВИЧАЙНІ ПОВІДОМЛЕННЯ
     # --------------------------------------------------------
 
     application.add_handler(
@@ -946,7 +1124,9 @@ def main():
         )
     )
 
-    print("✅ Бот запущений!")
+    print(
+        "✅ Бот запущений!"
+    )
 
     application.run_polling(
         allowed_updates=Update.ALL_TYPES

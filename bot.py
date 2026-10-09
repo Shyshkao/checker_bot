@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -5,6 +6,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from telegram import Update
+from telegram.error import NetworkError
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -1063,74 +1065,83 @@ async def message_handler(
 # MAIN
 # ============================================================
 
+async def start_application(application):
+    """Повторює початкове підключення, якщо Telegram API тимчасово не відповідає."""
+    while True:
+        try:
+            await application.initialize()
+            print("✅ Підключення до Telegram API успішне.")
+            break
+        except (NetworkError, asyncio.TimeoutError) as error:
+            print(
+                f"⚠️ Telegram API тимчасово не відповідає під час запуску: {error}. "
+                "Повторна спроба через 15 секунд..."
+            )
+            await asyncio.sleep(15)
+
+    try:
+        if application.updater is None:
+            raise RuntimeError("Updater недоступний. Перевір конфігурацію ApplicationBuilder.")
+
+        # Спершу запускаємо отримання оновлень, потім обробку черги.
+        await application.updater.start_polling(
+            allowed_updates=Update.ALL_TYPES,
+            bootstrap_retries=-1,
+            timeout=30,
+            read_timeout=45,
+            write_timeout=30,
+            connect_timeout=30,
+            pool_timeout=30,
+        )
+        await application.start()
+        print("✅ Бот запущений і готовий приймати команди.")
+
+        # Не завершуємо процес, поки Railway тримає контейнер запущеним.
+        await asyncio.Event().wait()
+    finally:
+        if application.updater and application.updater.running:
+            await application.updater.stop()
+        if application.running:
+            await application.stop()
+        await application.shutdown()
+
+
 def main():
-
     if not BOT_TOKEN:
-
         raise RuntimeError(
-            "BOT_TOKEN не знайдений у змінних середовища."
+            "BOT_TOKEN не знайдений у змінних середовища. Додай BOT_TOKEN у Railway Variables."
         )
 
-    print(
-        "🤖 Бот запускається..."
-    )
+    print("🤖 Бот запускається...")
 
     application = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
+        # Тайм-аути для звичайних запитів до Telegram API.
+        .connect_timeout(30)
+        .read_timeout(45)
+        .write_timeout(30)
+        .pool_timeout(30)
+        # Окремі тайм-аути для long polling.
+        .get_updates_connect_timeout(30)
+        .get_updates_read_timeout(45)
+        .get_updates_write_timeout(30)
+        .get_updates_pool_timeout(30)
         .build()
     )
 
-    # --------------------------------------------------------
-    # КОМАНДИ
-    # --------------------------------------------------------
+    # Команди
+    application.add_handler(CommandHandler("pereplata", pereplata))
+    application.add_handler(CommandHandler("cards", cards_command))
+    application.add_handler(CommandHandler("delcard", delcard_command))
+    application.add_handler(CommandHandler("cancel", cancel_command))
 
+    # Звичайні текстові повідомлення
     application.add_handler(
-        CommandHandler(
-            "pereplata",
-            pereplata
-        )
+        MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
     )
 
-    application.add_handler(
-        CommandHandler(
-            "cards",
-            cards_command
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "delcard",
-            delcard_command
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "cancel",
-            cancel_command
-        )
-    )
-
-    # --------------------------------------------------------
-    # ЗВИЧАЙНІ ПОВІДОМЛЕННЯ
-    # --------------------------------------------------------
-
-    application.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            message_handler
-        )
-    )
-
-    print(
-        "✅ Бот запущений!"
-    )
-
-    application.run_polling(
-        allowed_updates=Update.ALL_TYPES
-    )
+    asyncio.run(start_application(application))
 
 
 # ============================================================
